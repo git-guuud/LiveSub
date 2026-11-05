@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveSub stand-in</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/stand-in.css">
+</head>
+<body>
+  <main class="bench">
+    <p class="stamp">STAND_IN 135×240</p>
+    <h1 class="visually-hidden">Badge</h1>
+    <div class="bezel">
+      <div id="glass" class="glass" aria-live="polite"></div>
+    </div>
+    <div class="controls">
+      <button type="button" class="mode" disabled>Mode</button>
+      <button type="button" class="clip" disabled>Inject clip</button>
+    </div>
+    <p id="mic" class="mic">Mic power cut</p>
+    <p id="note" class="note" role="status"></p>
+    <a class="phone-link" href="/phone">Phone page</a>
+  </main>
+  <script type="module" src="/stand-in.js"></script>
+</body>
+</html>

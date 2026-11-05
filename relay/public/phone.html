@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveSub phone</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/phone.css">
+</head>
+<body>
+  <main class="phone">
+    <p class="stamp">Phone</p>
+    <h1 class="visually-hidden">Reminders and lists</h1>
+    <section aria-labelledby="reminders-heading">
+      <h2 id="reminders-heading">Reminders</h2>
+      <p id="reminders-empty">Nothing to remember yet.</p>
+      <ol id="reminders"></ol>
+    </section>
+    <section aria-labelledby="items-heading">
+      <h2 id="items-heading">Open items</h2>
+      <p id="items-empty">No open items.</p>
+      <ol id="items"></ol>
+    </section>
+    <section id="live-section" hidden aria-labelledby="live-heading">
+      <h2 id="live-heading">Live</h2>
+      <p id="live-empty">Words show up here as you speak.</p>
+      <ol id="live"></ol>
+    </section>
+    <section aria-labelledby="traces-heading">
+      <h2 id="traces-heading">Verified</h2>
+      <p id="traces-empty">No verified call yet.</p>
+      <ol id="traces"></ol>
+    </section>
+    <p id="link-status" class="link-status" role="status"></p>
+  </main>
+  <script type="module" src="/phone.js"></script>
+</body>
+</html>
