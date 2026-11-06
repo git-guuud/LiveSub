@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LiveSub phone</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@700&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/phone.css">
+</head>
+<body>
+  <main class="phone">
+    <label class="role">
+      <input id="badge-toggle" type="checkbox">
+      <span>This phone is the badge</span>
+    </label>
+    <section id="badge" class="badge" hidden>
+      <p class="stamp">STAND_IN</p>
+      <div class="bezel">
+        <div id="glass" class="glass" aria-live="polite"></div>
+      </div>
+      <div class="badge-controls">
+        <button type="button" id="mic-arm">Use the microphone</button>
+        <button type="button" id="mode" disabled>Mode</button>
+      </div>
+      <p id="mic" class="mic">Mic power cut</p>
+      <p id="note" class="note" role="status"></p>
+    </section>
+    <header class="mast">
+      <div class="mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20">
+          <rect x="2.5" y="9" width="2.4" height="6" rx="1" fill="#f4f7f2"/>
+          <rect x="6.7" y="6" width="2.4" height="12" rx="1" fill="#f4f7f2"/>
+          <rect x="10.9" y="3.5" width="2.4" height="17" rx="1" fill="#f4f7f2"/>
+          <rect x="15.1" y="6" width="2.4" height="12" rx="1" fill="#f4f7f2"/>
+          <rect x="19.3" y="9" width="2.4" height="6" rx="1" fill="#f4f7f2"/>
+        </svg>
+      </div>
+      <div>
+        <p class="eyebrow">Your companion</p>
+        <h1>Remembered</h1>
+      </div>
+    </header>
+    <form id="badge-name" class="name-form">
+      <label for="badge-name-input">Badge name</label>
+      <div class="name-row">
+        <input id="badge-name-input" type="text" maxlength="24" autocomplete="off" spellcheck="false" value="seer" enterkeyhint="done" aria-describedby="badge-name-hint">
+        <button type="submit">Save</button>
+      </div>
+      <p id="badge-name-note" class="revise-note" hidden></p>
+    </form>
+    <p id="badge-name-hint" class="name-hint">Say “hey <span id="badge-name-spoken">seer</span>, add this to the to-do list.” The sentence before that, or the next one, is saved.</p>
+    <p id="link-status" class="link-status" role="status"></p>
+    <section aria-labelledby="reminders-heading">
+      <div class="section-head">
+        <h2 id="reminders-heading">Reminders</h2>
+        <span id="reminders-count" class="count" hidden></span>
+      </div>
+      <p id="reminders-empty">Nothing to remember yet.</p>
+      <ol id="reminders" class="card"></ol>
+    </section>
+    <section aria-labelledby="items-heading">
+      <div class="section-head">
+        <h2 id="items-heading">Open items</h2>
+        <span id="items-count" class="count" hidden></span>
+      </div>
+      <p id="items-empty">No open items.</p>
+      <ol id="items" class="card"></ol>
+    </section>
+    <section aria-labelledby="summary-heading">
+      <div class="section-head">
+        <h2 id="summary-heading">Summary</h2>
+      </div>
+      <p id="summary-empty">No summary yet.</p>
+      <div id="summary-panel" class="summary" hidden>
+        <p id="summary-text" class="summary-text" hidden></p>
+        <ol id="summary-points"></ol>
+      </div>
+    </section>
+    <section id="live-section" hidden aria-labelledby="live-heading">
+      <div class="section-head">
+        <h2 id="live-heading">Live</h2>
+      </div>
+      <p id="live-empty">Words show up here as you speak.</p>
+      <ol id="live" class="card"></ol>
+    </section>
+    <section aria-labelledby="traces-heading">
+      <div class="section-head">
+        <h2 id="traces-heading">Verified</h2>
+      </div>
+      <p id="traces-empty">No verified call yet.</p>
+      <ol id="traces" class="card"></ol>
+    </section>
+  </main>
+  <script type="module" src="/phone.js"></script>
+</body>
+</html>
