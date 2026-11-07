@@ -8,12 +8,31 @@ import { merkleRootOf, type OgNetwork } from "./storage.ts";
 export const GALILEO_RPC = "https://evmrpc-testnet.0g.ai";
 export const GALILEO_INDEXER = "https://indexer-storage-testnet-turbo.0g.ai";
 export const GALILEO_FLOW = "0x22E03a6A89B950F1c82ec5e74F8eCa321a105296";
+export const MAINNET_RPC = "https://evmrpc.0g.ai";
+export const MAINNET_INDEXER = "https://indexer-storage-turbo.0g.ai";
+export const MAINNET_FLOW = "0x62D4144dB0F0a6fBBaeb6296c785C71B3D57C526";
 export const INDEX_KEY = "livesub.index";
+
+export interface StorageEndpoints {
+  rpcUrl: string;
+  indexerUrl: string;
+  flowAddress: string;
+}
+
+/** Galileo unless `name` is `mainnet`. The funded key and KV stream stay on Galileo. */
+export function storageEndpoints(name: string | undefined): StorageEndpoints {
+  if (name === "mainnet") {
+    return { rpcUrl: MAINNET_RPC, indexerUrl: MAINNET_INDEXER, flowAddress: MAINNET_FLOW };
+  }
+  return { rpcUrl: GALILEO_RPC, indexerUrl: GALILEO_INDEXER, flowAddress: GALILEO_FLOW };
+}
 
 export interface ZeroGConfig {
   privateKey: string;
   streamId: string;
   kvNodeUrl: string;
+  /** KV key. Tests pass a side key so the companion index is left alone. */
+  indexKey?: string;
   rpcUrl?: string;
   indexerUrl?: string;
   flowAddress?: string;
@@ -62,7 +81,7 @@ export function galileoTransport(config: ZeroGConfig): LogTransport {
   const signer = new Wallet(config.privateKey, new JsonRpcProvider(rpcUrl));
   const flowAddress = config.flowAddress ?? GALILEO_FLOW;
   const kv = new KvClient(config.kvNodeUrl);
-  const keyBytes = new TextEncoder().encode(INDEX_KEY);
+  const keyBytes = new TextEncoder().encode(config.indexKey ?? INDEX_KEY);
 
   return {
     async upload(bytes) {

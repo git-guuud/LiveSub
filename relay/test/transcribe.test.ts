@@ -42,16 +42,18 @@ test("a verified transcript is kept and the audio is wiped", async () => {
     },
   });
   assert.equal(calls, 1);
-  assert.deepEqual(result, {
-    ok: true,
-    text: transcript,
-    trace: {
-      step: "transcribe",
-      model: TRANSCRIBE_MODEL,
-      request_id: requestId,
-      provider,
-      tee_verified: true,
-    },
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.text, transcript);
+  assert.equal(result.hearing?.measured, false);
+  assert.equal(result.hearing?.voice, "clear");
+  assert.equal(result.hearing?.noise, "low");
+  assert.deepEqual(result.trace, {
+    step: "transcribe",
+    model: TRANSCRIBE_MODEL,
+    request_id: requestId,
+    provider,
+    tee_verified: true,
   });
   assert.deepEqual(audio, Uint8Array.from([0, 0, 0, 0]));
   assert.equal(JSON.stringify(result).includes("audio"), false);

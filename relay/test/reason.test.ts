@@ -6,6 +6,7 @@ import {
   pickPrivateChatModel,
   reasonUserContent,
   reasonUtterance,
+  locksReason,
   createChatModelMemory,
   type ReasonResult,
 } from "../src/reason.ts";
@@ -99,9 +100,11 @@ const verifiedTrace = { request_id: requestId, provider, tee_verified: true };
 test("the prompt is the mode, the timestamp, the transcript, and the open items", () => {
   const user = reasonUserContent("companion", when, spoken, index);
   assert.equal(user.startsWith("mode: companion\n"), true);
+  assert.match(user, /badge: seer/);
   assert.match(user, new RegExp(`timestamp: ${when}`));
   assert.match(user, /Meet Aya Friday/);
   assert.ok(user.indexOf("Meet Aya Friday") < user.indexOf("Send Kenji 5 USDC"));
+  assert.equal(user.includes("hearing:"), false);
   assert.equal(user.includes("direction:"), false);
   assert.equal(user.includes("open_loop"), false);
   assert.equal(user.includes("standard"), false);
@@ -168,6 +171,7 @@ test("a verified reason returns the Kenji operations and does not change the ind
     memory_ops: kenjiOps.memory_ops,
     transcript: spoken,
     translation: "",
+    summary: { text: "", points: [] },
     trace: {
       step: "reason",
       model: chatModel,
@@ -218,6 +222,64 @@ test("the first successful catalog call records the private chat model and does 
   assert.equal(catalogCalls, 1);
   assert.equal(chatCalls, 2);
   assert.equal(record.model?.id, "teeml-four-cheap");
+});
+
+test("a todo list and a summary with points are kept, and a broken summary is refused", async () => {
+  const spokenTasks =
+    "Remind me to meet Kenji on Thursday. I still owe him 5 USDC. Pick up the dry cleaning and email the landlord about the leak.";
+  const content = {
+    memory_ops: [
+      { op: "add_reminder", text: "Meet Kenji Thursday" },
+      { op: "add_item", list: "debt", text: "Send Kenji 5 USDC" },
+      { op: "add_item", list: "to-do", text: "Pick up the dry cleaning" },
+      { op: "add_item", list: "tasks", text: "Email the landlord about the leak" },
+    ],
+    transcript: spokenTasks,
+    translation: "",
+    summary: {
+      text: "Thursday with Kenji is open, the 5 USDC is unpaid, and two chores were added.",
+      points: ["Meet Kenji Thursday", "5 USDC still unpaid", "Pick up the dry cleaning", "Email the landlord about the leak"],
+    },
+  };
+  let system = "";
+  const result = await reasonUtterance(spokenTasks, {
+    apiKey: "sk-test",
+    model: chatModel,
+    timestamp: when,
+    mode: "companion",
+    index: emptyWorkingSet(),
+    fetchImpl: async (_url, init) => {
+      const request = new Request(REASON_URL, init);
+      const payload = (await request.json()) as { messages?: Array<{ role?: string; content?: string }> };
+      system = payload.messages?.find((message) => message.role === "system")?.content ?? "";
+      return new Response(reasonBody(content, verifiedTrace), { status: 200 });
+    },
+  });
+  assert.match(system, /list todo/);
+  assert.match(system, /summary is \{text, points\}/);
+  assert.match(system, /badge/);
+  assert.equal(system.includes("standard"), false);
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.deepEqual(
+    result.memory_ops.map((op) => (op.op === "add_item" ? op.list : op.op)),
+    ["add_reminder", "open", "todo", "todo"],
+  );
+  assert.equal(result.summary.points.length, 4);
+  assert.match(result.summary.text, /5 USDC/);
+
+  const broken = await reasonUtterance(spokenTasks, {
+    apiKey: "sk-test",
+    model: chatModel,
+    timestamp: when,
+    mode: "companion",
+    index: emptyWorkingSet(),
+    fetchImpl: async () =>
+      new Response(reasonBody({ ...content, summary: { text: "Kept", points: "not a list" } }, verifiedTrace), {
+        status: 200,
+      }),
+  });
+  assert.deepEqual(broken, { ok: false, reason: "bad_output", status: 200 });
 });
 
 test("an old loop operation is not a reason result", async () => {
@@ -277,6 +339,23 @@ test("a missing trace is not a reason result", async () => {
   });
   assert.deepEqual(result, { ok: false, reason: "missing_trace", status: 200 });
   assert.equal(JSON.stringify(result).includes(spoken), false);
+});
+
+test("a sealed response with no tee boolean does not lock and is not memory", async () => {
+  const result = await reasonUtterance(spoken, {
+    apiKey: "sk-test",
+    model: chatModel,
+    timestamp: when,
+    mode: "companion",
+    index,
+    fetchImpl: async () =>
+      new Response(reasonBody(kenjiOps, { request_id: requestId, provider }), {
+        status: 200,
+        headers: { "x-0g-e2ee": "sealed" },
+      }),
+  });
+  assert.deepEqual(result, { ok: false, reason: "sealed", status: 200 });
+  assert.equal(locksReason(result), false);
 });
 
 test("tee_verified false is not a reason result", async () => {

@@ -11,7 +11,7 @@ import { Session } from "../src/session.ts";
 import { CipherLog, InMemoryOg } from "../src/storage.ts";
 import { TRANSCRIBE_URL, TRUST_MODE, TRUST_MODE_HEADER } from "../src/transcribe.ts";
 import { REASON_URL } from "../src/reason.ts";
-import { applyMemoryOps, emptyWorkingSet, stampEpisodeRoots } from "../src/working-set.ts";
+import { applyMemoryOps, emptyWorkingSet, reviseWorkingSet, stampEpisodeRoots } from "../src/working-set.ts";
 import { renderGlass } from "../public/screen.js";
 import { renderCompanion, renderPhone } from "../public/phone.js";
 
@@ -345,4 +345,55 @@ test("a phone-closed clip applies the Kenji memory inside the process", async ()
   } finally {
     await relay.close();
   }
+});
+
+test("a phone edit keeps the time and a blank or duplicate edit changes nothing", () => {
+  const index = {
+    version: "2.0" as const,
+    reminders: [{ text: "Meet Kenji Thursday", mentioned_at: when, episode_root: "0xmeet" }],
+    items: [
+      { list: "open", text: "Send Kenji 5 USDC", updated_at: when, episode_root: "0xpay" },
+      { list: "todo", text: "Send Kenji 5 USDC", updated_at: when + 5 },
+    ],
+  };
+  const renamed = reviseWorkingSet(index, {
+    action: "edit_reminder",
+    text: "Meet Kenji Thursday",
+    next: "Meet Kenji Friday",
+  });
+  assert.equal(renamed?.reminders[0]?.text, "Meet Kenji Friday");
+  assert.equal(renamed?.reminders[0]?.mentioned_at, when);
+  assert.equal(renamed?.reminders[0]?.episode_root, "0xmeet");
+  assert.equal(index.reminders[0]?.text, "Meet Kenji Thursday");
+  assert.equal(reviseWorkingSet(index, { action: "edit_reminder", text: "Meet Kenji Thursday", next: "  " }), null);
+  assert.equal(
+    reviseWorkingSet(
+      {
+        ...index,
+        reminders: [
+          index.reminders[0],
+          { text: "Call Mum", mentioned_at: when },
+        ],
+      },
+      { action: "edit_reminder", text: "Meet Kenji Thursday", next: "Call Mum" },
+    ),
+    null,
+  );
+  const closed = reviseWorkingSet(index, { action: "close_item", list: "todo", text: "Send Kenji 5 USDC" });
+  assert.deepEqual(closed?.items.map((row) => row.list), ["open"]);
+  const reworded = reviseWorkingSet(index, {
+    action: "edit_item",
+    list: "open",
+    text: "Send Kenji 5 USDC",
+    next: "Send Kenji 6 USDC",
+  });
+  assert.equal(reworded?.items[0]?.text, "Send Kenji 6 USDC");
+  assert.equal(reworded?.items[0]?.list, "open");
+  assert.equal(reworded?.items[0]?.updated_at, when);
+  assert.equal(reworded?.items[0]?.episode_root, "0xpay");
+  assert.equal(
+    reviseWorkingSet(index, { action: "edit_item", list: "open", text: "Send Kenji 5 USDC", next: "Send Kenji 5 USDC" })
+      ?.items[1]?.list,
+    "todo",
+  );
 });

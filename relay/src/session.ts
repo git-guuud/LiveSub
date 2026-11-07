@@ -1,4 +1,13 @@
+import {
+  badgeNameOf,
+  emptyAddressMemory,
+  hearAddress,
+  normalizeBadgeName,
+  withForcedAdd,
+  type AddressMemory,
+} from "./address.ts";
 import { buildUtterance, clipDurationSec, type Utterance } from "./episode.ts";
+import { guardUtterance, type Hearing } from "./hearing.ts";
 import type {
   ClientEvent,
   Face,
@@ -18,31 +27,44 @@ import type { BackgroundLog } from "./storage.ts";
 import { locksEnclave, type TranscribeResult } from "./transcribe.ts";
 import {
   applyMemoryOps,
+  applySummary,
   emptyWorkingSet,
+  reviseWorkingSet,
   stampEpisodeRoots,
   workingSetFromStored,
   type MemoryOp,
+  type PhoneRevision,
   type WorkingSet,
 } from "./working-set.ts";
 
 const MAX_CHUNK_BYTES = 256 * 1024;
 
 export class Session {
+  #fallbackName: string;
+  #address: AddressMemory = emptyAddressMemory();
   #mode: Mode = "companion";
   #phoneLinked = false;
   #relayLinked = false;
   #locked = false;
   #index: WorkingSet = emptyWorkingSet();
   #liveLines: LiveLine[] = [];
+  /** The latest live line is waiting for a translation from reason. */
+  #caption = false;
   #traces: TraceRow[] = [];
   #pendingTrace: TraceRow | null = null;
   #capturedMode: Mode = "companion";
   #audioDurationSec = 0;
+  #hearing: Hearing | null = null;
+  #heard = "";
   #chunk: Uint8Array | null = null;
   #store: BackgroundLog | null = null;
   #log: Promise<void> = Promise.resolve();
   #screenListener: (() => void) | null = null;
   #phoneListener: (() => void) | null = null;
+
+  constructor(options?: { badgeName?: string }) {
+    this.#fallbackName = normalizeBadgeName(options?.badgeName ?? "") ?? "seer";
+  }
 
   setScreenListener(listener: () => void): void {
     this.#screenListener = listener;
@@ -79,6 +101,11 @@ export class Session {
     return this.#capturedMode;
   }
 
+  /** The name the wearer addresses. A stored name wins over the relay default. */
+  badgeName(): string {
+    return badgeNameOf(this.#index.badge_name ?? this.#fallbackName);
+  }
+
   workingSet(): WorkingSet {
     return workingSetFromStored(this.#index);
   }
@@ -107,6 +134,7 @@ export class Session {
     if (!linked) {
       this.#mode = "companion";
       this.#liveLines = [];
+      this.#caption = false;
       this.#wipeChunk();
     }
     this.#emit();
@@ -124,6 +152,7 @@ export class Session {
       this.#mode = "companion";
       const hadLines = this.#liveLines.length > 0;
       this.#liveLines = [];
+      this.#caption = false;
       if (wasLive || hadLines) this.#emitScreen();
       return;
     }
@@ -145,6 +174,32 @@ export class Session {
       live_lines: this.#liveLines.map((row) => ({ ...row })),
       traces: this.#traces.map((row) => ({ ...row })),
     };
+  }
+
+  /**
+   * Dismiss or reword one open row, then write the index.
+   * Null leaves the working set unchanged. The glass is not part of this.
+   */
+  async reviseCompanion(change: PhoneRevision): Promise<WorkingSet | null> {
+    const previous = this.#index;
+    const next = reviseWorkingSet(previous, change);
+    if (!next) return null;
+    this.#index = next;
+    const store = this.#store;
+    if (!store) return workingSetFromStored(this.#index);
+    const pending = this.#log.then(() => store.writeCompanion(this.#index));
+    this.#log = pending.then(
+      () => undefined,
+      () => undefined,
+    );
+    try {
+      await pending;
+    } catch (err) {
+      console.error("companion revise failed", err);
+      if (this.#index === next) this.#index = previous;
+      return null;
+    }
+    return workingSetFromStored(this.#index);
   }
 
   /** Proof-checked read of the stored index. A failed proof is an empty view. */
@@ -202,10 +257,15 @@ export class Session {
     if (this.#locked) return { ok: false, reason: "locked" };
     if (!result.ok) {
       this.#pendingTrace = null;
+      this.#hearing = null;
+      this.#heard = "";
       if (locksEnclave(result)) this.lock();
       return { ok: false, reason: result.reason };
     }
     this.#pendingTrace = { ...result.trace };
+    this.#hearing = result.hearing ?? null;
+    this.#heard = result.text;
+    this.#showCaption(result.text, "");
     return { ok: true };
   }
 
@@ -222,32 +282,57 @@ export class Session {
   ): Result {
     if (this.#locked) return { ok: false, reason: "locked" };
     if (!result.ok) {
+      this.#caption = false;
       this.#pendingTrace = null;
+      this.#hearing = null;
+      this.#heard = "";
       if (locksReason(result)) this.lock();
       return { ok: false, reason: result.reason };
     }
     if (!Number.isFinite(timestamp)) return { ok: false, reason: "bad_timestamp" };
     const pending = this.#pendingTrace;
+    const heard = this.#heard;
+    const voice = this.#hearing?.voice ?? null;
+    const transcript = this.#heard || result.transcript;
+    const addressed = hearAddress({
+      transcript,
+      name: this.badgeName(),
+      state: this.#address,
+      voice,
+    });
+    this.#address = addressed.state;
+    const guarded = this.#hearing
+      ? guardUtterance({
+          memoryOps: result.memory_ops,
+          summary: result.summary,
+          transcript,
+          hearing: this.#hearing,
+          index: this.#index,
+        })
+      : null;
+    const memoryOps = withForcedAdd(guarded ? guarded.memory_ops : result.memory_ops, addressed.add, this.badgeName());
+    const summary = guarded ? guarded.summary : result.summary;
     const utterance = buildUtterance({
       timestamp,
       mode: source?.mode ?? this.#capturedMode,
       audioDurationSec: source?.audioDurationSec ?? this.#audioDurationSec,
       transcript: result.transcript,
       translation: result.translation,
-      memoryOps: result.memory_ops,
+      memoryOps,
+      summary,
       transcribe: pending,
       reason: result.trace,
     });
-    this.#index = applyMemoryOps(this.#index, result.memory_ops, timestamp);
+    this.#index = applySummary(applyMemoryOps(this.#index, memoryOps, timestamp), summary, timestamp);
     if (pending) this.#traces.push(pending);
     this.#pendingTrace = null;
     this.#traces.push({ ...result.trace });
-    if (this.#mode === "live" && this.#phoneLinked) {
-      const line = cleanLine({ transcript: result.transcript, translation: result.translation });
-      if (line) this.#liveLines.push(line);
-    }
+    if (voice !== "unclear") this.#showCaption(result.transcript || heard, result.translation);
+    this.#caption = false;
+    this.#hearing = null;
+    this.#heard = "";
     if (this.#phoneLinked) this.#emitPhone();
-    if (utterance) this.#schedule(utterance, result.memory_ops, timestamp);
+    if (utterance) this.#schedule(utterance, memoryOps, timestamp);
     return { ok: true };
   }
 
@@ -292,9 +377,27 @@ export class Session {
     this.#locked = true;
     this.#mode = "companion";
     this.#liveLines = [];
+    this.#caption = false;
     this.#pendingTrace = null;
+    this.#hearing = null;
+    this.#heard = "";
+    this.#address = emptyAddressMemory();
     this.#wipeChunk();
     this.#emit();
+  }
+
+  /** Live shows the verified words now. Reason fills the translation when it verifies. */
+  #showCaption(transcript: string, translation: string): void {
+    if (this.#mode !== "live" || !this.#phoneLinked) return;
+    if (this.#hearing?.voice === "unclear") return;
+    const line = cleanLine({ transcript, translation });
+    if (!line) return;
+    if (this.#caption && this.#liveLines.length > 0) this.#liveLines[this.#liveLines.length - 1] = line;
+    else {
+      this.#liveLines.push(line);
+      this.#caption = true;
+    }
+    this.#emitPhone();
   }
 
   /** Successful private heartbeat. Live lines stay gone. */

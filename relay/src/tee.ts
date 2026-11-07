@@ -6,7 +6,8 @@ export const TRUST_MODE = "private";
 
 export type TeeTraceFailure = {
   ok: false;
-  reason: "missing_trace" | "tee_unverified";
+  /** `tee_unclaimed` is a trace with no boolean. A sealed response uses that for "no claim". */
+  reason: "missing_trace" | "tee_unverified" | "tee_unclaimed";
   status: number;
 };
 
@@ -25,12 +26,12 @@ export function readTeeTrace(body: unknown, status: number): TeeTraceSuccess | T
     return { ok: false, reason: "missing_trace", status };
   }
   const fields = trace as { tee_verified?: unknown; request_id?: unknown; provider?: unknown };
-  if (fields.tee_verified !== true) return { ok: false, reason: "tee_unverified", status };
-  if (typeof fields.request_id !== "string" || fields.request_id.length === 0) {
+  const requestId = typeof fields.request_id === "string" ? fields.request_id : "";
+  const provider = typeof fields.provider === "string" ? fields.provider : "";
+  if (requestId.length === 0 || provider.length === 0) {
     return { ok: false, reason: "missing_trace", status };
   }
-  if (typeof fields.provider !== "string" || fields.provider.length === 0) {
-    return { ok: false, reason: "missing_trace", status };
-  }
-  return { ok: true, request_id: fields.request_id, provider: fields.provider };
+  if (fields.tee_verified === true) return { ok: true, request_id: requestId, provider };
+  if (fields.tee_verified === false) return { ok: false, reason: "tee_unverified", status };
+  return { ok: false, reason: "tee_unclaimed", status };
 }

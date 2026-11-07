@@ -299,6 +299,9 @@ test("stand-in is served without a baked sentence, and the clip control is off t
     const script = await (await fetch(`http://127.0.0.1:${port}/stand-in.js`)).text();
     assert.match(script, /not_linked/);
     assert.match(script, /"press"/);
+    const mic = await (await fetch(`http://127.0.0.1:${port}/phone-mic.js`)).text();
+    assert.match(mic, /encodeWav/);
+    assert.match(mic, /phoneIsBadge/);
   } finally {
     await relay.close();
   }

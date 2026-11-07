@@ -15,6 +15,13 @@ const REASONS = {
   empty_chunk: "Empty clip dropped.",
   chunk_too_large: "That clip is too long.",
   bad_message: "The relay ignored that message.",
+  sealed: "The enclave sent no verification. Nothing was stored.",
+  tee_unverified: "The enclave check failed. Nothing was stored.",
+  missing_trace: "The enclave sent no verification. Nothing was stored.",
+  http_503: "No private provider. The mic is locked.",
+  http_502: "The provider failed. The mic is locked.",
+  empty_transcript: "That clip had no words.",
+  no_key: "The relay has no 0G key.",
 };
 
 export function reasonText(reason) {

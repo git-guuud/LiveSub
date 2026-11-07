@@ -225,13 +225,25 @@ function indexDocument(index: WorkingSet): {
   version: "2.0";
   reminders: Array<{ text: string; mentioned_at: number; episode_root?: string }>;
   lists: Array<{ list: string; text: string; updated_at: number; episode_root?: string }>;
+  summary?: { text: string; points: string[]; mentioned_at: number; episode_root?: string };
+  badge_name?: string;
 } {
+  const summary = index.summary;
   return {
     version: "2.0",
     reminders: index.reminders.map((row) => withRoot({ text: row.text, mentioned_at: row.mentioned_at }, row.episode_root)),
     lists: index.items.map((row) =>
       withRoot({ list: row.list, text: row.text, updated_at: row.updated_at }, row.episode_root),
     ),
+    ...(summary
+      ? {
+          summary: withRoot(
+            { text: summary.text, points: [...summary.points], mentioned_at: summary.mentioned_at },
+            summary.episode_root,
+          ),
+        }
+      : {}),
+    ...(index.badge_name ? { badge_name: index.badge_name } : {}),
   };
 }
 

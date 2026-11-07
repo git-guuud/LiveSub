@@ -4,7 +4,7 @@
 import type { Mode } from "./protocol.ts";
 import type { ReasonTrace } from "./reason.ts";
 import { TRANSCRIBE_MODEL, type TranscribeTrace } from "./transcribe.ts";
-import type { MemoryOp } from "./working-set.ts";
+import type { MemoryOp, SummaryDraft } from "./working-set.ts";
 
 const SAMPLE_RATE = 16000;
 
@@ -16,6 +16,7 @@ export interface Utterance {
   transcript: string;
   translation: string;
   memory_ops: MemoryOp[];
+  summary?: SummaryDraft;
   traces: [TranscribeTrace, ReasonTrace];
 }
 
@@ -26,6 +27,7 @@ export interface UtteranceInput {
   transcript: string;
   translation: string;
   memoryOps: MemoryOp[];
+  summary?: SummaryDraft | null;
   transcribe: TranscribeTrace | null;
   reason: ReasonTrace | null;
 }
@@ -44,6 +46,7 @@ export function buildUtterance(input: UtteranceInput): Utterance | null {
   if (input.mode !== "companion" && input.mode !== "live") return null;
   const memoryOps = copyOps(input.memoryOps);
   if (!memoryOps) return null;
+  const summary = copySummary(input.summary);
   const transcribe = verifiedTranscribe(input.transcribe);
   const reason = verifiedReason(input.reason);
   if (!transcribe || !reason) return null;
@@ -55,6 +58,7 @@ export function buildUtterance(input: UtteranceInput): Utterance | null {
     transcript: input.transcript,
     translation: input.translation,
     memory_ops: memoryOps,
+    ...(summary ? { summary } : {}),
     traces: [transcribe, reason],
   };
 }
@@ -152,6 +156,8 @@ function normalizeUtterance(value: unknown): Utterance | null {
   if (typeof record.transcript !== "string" || typeof record.translation !== "string") return null;
   const memoryOps = copyOps(record.memory_ops);
   if (!memoryOps) return null;
+  const summary = readStoredSummary(record.summary);
+  if (summary === "bad") return null;
   if (!Array.isArray(record.traces) || record.traces.length !== 2) return null;
   const transcribe = readStoredTrace(record.traces[0], "transcribe");
   const reason = readStoredTrace(record.traces[1], "reason");
@@ -164,8 +170,41 @@ function normalizeUtterance(value: unknown): Utterance | null {
     transcript: record.transcript,
     translation: record.translation,
     memory_ops: memoryOps,
+    ...(summary ? { summary } : {}),
     traces: [transcribe, reason],
   };
+}
+
+function readStoredSummary(value: unknown): SummaryDraft | null | "bad" {
+  if (value === undefined || value === null) return null;
+  const summary = copySummary(value);
+  if (summary) return summary;
+  if (typeof value !== "object" || Array.isArray(value)) return "bad";
+  const record = value as { text?: unknown; points?: unknown };
+  if (typeof record.text !== "string" || !Array.isArray(record.points)) return "bad";
+  if (record.points.some((point) => typeof point !== "string")) return "bad";
+  if (record.text.trim().length > 500) return "bad";
+  if (record.points.some((point) => point.trim().length > 280)) return "bad";
+  return null;
+}
+
+function copySummary(value: unknown): SummaryDraft | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as { text?: unknown; points?: unknown };
+  if (typeof record.text !== "string" || !Array.isArray(record.points)) return null;
+  const text = record.text.trim();
+  const points: string[] = [];
+  for (const point of record.points) {
+    if (typeof point !== "string") return null;
+    const label = point.trim();
+    if (!label || label.length > 280) return null;
+    points.push(label);
+    if (points.length === 8) break;
+  }
+  if (text.length > 500) return null;
+  if (!text && points.length === 0) return null;
+  return { text, points };
 }
 
 function readStoredTrace(value: unknown, step: "transcribe"): TranscribeTrace | null;

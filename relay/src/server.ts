@@ -9,6 +9,7 @@ import { createChatModelMemory, reasonUtterance, type ChatModelMemory } from "./
 import { Session } from "./session.ts";
 import type { BackgroundLog } from "./storage.ts";
 import { transcribeClip } from "./transcribe.ts";
+import { parsePhoneRevision, type WorkingSet } from "./working-set.ts";
 
 const PUBLIC_FILES = new Map<string, string>([
   ["/", "stand-in.html"],
@@ -20,6 +21,7 @@ const PUBLIC_FILES = new Map<string, string>([
   ["/phone.html", "phone.html"],
   ["/phone.css", "phone.css"],
   ["/phone.js", "phone.js"],
+  ["/phone-mic.js", "phone-mic.js"],
 ]);
 
 const MIME: Record<string, string> = {
@@ -43,10 +45,12 @@ export interface RelayOptions {
   chatModel?: string;
   /** 0G log and KV. Unset until the storage key and stream are configured. */
   log?: BackgroundLog;
+  /** Spoken name before the index has one. The default is seer. */
+  badgeName?: string;
 }
 
 export function createRelay(publicDir = defaultPublicDir(), options: RelayOptions = {}): Relay {
-  const session = new Session();
+  const session = new Session({ badgeName: options.badgeName });
   if (options.log) session.setStore(options.log);
   const apiKey = options.apiKey;
   const chatMemory: ChatModelMemory = createChatModelMemory();
@@ -76,11 +80,27 @@ export function createRelay(publicDir = defaultPublicDir(), options: RelayOption
 
   const server = http.createServer(async (req, res) => {
     const url = req.url?.split("?")[0] ?? "/";
+    if (url === "/companion" && req.method === "POST") {
+      const change = parsePhoneRevision(await readJson(req));
+      if (!change) {
+        res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: "bad_message" }));
+        return;
+      }
+      const next = await session.reviseCompanion(change);
+      if (!next) {
+        res.writeHead(409, { "content-type": "application/json; charset=utf-8" });
+        res.end(JSON.stringify({ error: "refused" }));
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+      res.end(companionPayload(next, session.badgeName()));
+      return;
+    }
     if (url === "/companion") {
       const view = await session.readCompanion();
-      const body = JSON.stringify({ reminders: view.reminders, items: view.items });
       res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-      res.end(body);
+      res.end(companionPayload(view, session.badgeName()));
       return;
     }
     const name = PUBLIC_FILES.get(url);
@@ -129,14 +149,16 @@ export function createRelay(publicDir = defaultPublicDir(), options: RelayOption
 
     ws.on("message", (data, isBinary) => {
       if (isBinary) {
-        const result = session.acceptChunk(toBytes(data));
+        const bytes = toBytes(data);
+        const result = session.acceptChunk(bytes);
         if (!result.ok) {
           send(ws, { type: "reject", reason: result.reason });
           return;
         }
+        console.log("clip", bytes.byteLength);
         if (!apiKey) return;
         const clip = session.takeClip();
-        if (clip) void processClip(clip);
+        if (clip) enqueueClip(clip);
         return;
       }
       const parsed = parseClientEvent(toText(data));
@@ -154,14 +176,51 @@ export function createRelay(publicDir = defaultPublicDir(), options: RelayOption
     });
   });
 
+  let clipsPending = 0;
+  let clipChain: Promise<void> = Promise.resolve();
+
+  function broadcastBadge(message: unknown): void {
+    const payload = JSON.stringify(message);
+    for (const ws of clients) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+    }
+  }
+
+  function enqueueClip(clip: Uint8Array): void {
+    clipsPending += 1;
+    clipChain = clipChain
+      .then(() => processClip(clip))
+      .catch((err) => {
+        console.error("clip failed", err);
+      })
+      .finally(() => {
+        clipsPending -= 1;
+        if (clipsPending === 0) broadcastBadge({ type: "clip", busy: false });
+      });
+  }
+
   async function processClip(clip: Uint8Array): Promise<void> {
+    if (process.env.LIVESUB_RECORD === "1") {
+      const dir = path.join(process.cwd(), "data", "clips");
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `clip-${Date.now()}.wav`);
+      fs.writeFileSync(file, clip);
+      console.log("recorded", file, clip.byteLength);
+      return;
+    }
     const timestamp = Math.floor(Date.now() / 1000);
     const mode = session.capturedMode();
     const audioDurationSec = clipDurationSec(clip);
     const index = session.workingSet();
+    if (!index.badge_name) index.badge_name = session.badgeName();
     const transcribed = await transcribeClip(clip, { apiKey, fetchImpl: options.fetchImpl });
+    if (transcribed.ok) console.log("transcript", transcribed.text, transcribed.hearing?.voice ?? "");
+    else console.log("transcript failed", transcribed.reason, transcribed.status ?? "");
     session.acceptTranscribe(transcribed);
-    if (!transcribed.ok || session.screen().face === "locked") return;
+    if (!transcribed.ok || session.screen().face === "locked") {
+      if (!transcribed.ok) broadcastBadge({ type: "reject", reason: transcribed.reason });
+      return;
+    }
     const reasoned = await reasonUtterance(transcribed.text, {
       apiKey,
       fetchImpl: options.fetchImpl,
@@ -170,8 +229,11 @@ export function createRelay(publicDir = defaultPublicDir(), options: RelayOption
       timestamp,
       mode,
       index,
+      hearing: transcribed.hearing,
     });
-    session.acceptReason(reasoned, timestamp, { mode, audioDurationSec });
+    const applied = session.acceptReason(reasoned, timestamp, { mode, audioDurationSec });
+    console.log("reason", reasoned.ok ? "ok" : reasoned.reason);
+    if (!applied.ok) broadcastBadge({ type: "reject", reason: applied.reason });
   }
 
   return {
@@ -188,6 +250,31 @@ export function createRelay(publicDir = defaultPublicDir(), options: RelayOption
       });
     },
   };
+}
+
+function companionPayload(view: WorkingSet, badgeName: string): string {
+  return JSON.stringify({
+    reminders: view.reminders,
+    items: view.items,
+    ...(view.summary ? { summary: view.summary } : {}),
+    badge_name: view.badge_name ?? badgeName,
+  });
+}
+
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += buf.length;
+    if (size > 4096) return null;
+    chunks.push(buf);
+  }
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    return null;
+  }
 }
 
 function toBytes(data: RawData): Uint8Array {

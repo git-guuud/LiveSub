@@ -38,6 +38,15 @@ export interface ListItem {
   episode_root?: string;
 }
 
+/** Latest utterance summary. Empty speech does not replace one that is already open. */
+export interface MemorySummary {
+  text: string;
+  points: string[];
+  mentioned_at: number;
+  /** Merkle root of the utterance that wrote it. Absent until that write is prepared. */
+  episode_root?: string;
+}
+
 export interface LiveLine {
   transcript: string;
   translation: string;
@@ -71,6 +80,7 @@ export interface PhoneState {
 export interface CompanionView {
   reminders: Reminder[];
   items: ListItem[];
+  summary?: MemorySummary | null;
 }
 
 /**

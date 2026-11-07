@@ -159,3 +159,70 @@ test("a version 1.0 index reads as an empty companion view", async () => {
   assert.equal(view.items.length, 0);
   assert.equal(JSON.stringify(view).includes("Kenji"), false);
 });
+
+test("the phone can dismiss an item and reword a reminder", async () => {
+  const key = createStorageKey();
+  const network = new InMemoryOg();
+  const log = new CipherLog(key, network);
+  await log.writeCompanion({
+    version: "2.0",
+    reminders: [
+      { text: "Meet Kenji Thursday", mentioned_at: when, episode_root: "0xmeet" },
+      { text: "Call Mum after the appointment", mentioned_at: when + 80 },
+    ],
+    items: [
+      { list: "open", text: "Send Kenji 5 USDC", updated_at: when, episode_root: "0xpay" },
+      { list: "todo", text: "Pick up the dry cleaning", updated_at: when + 10 },
+      { list: "Errands", text: "Return the library books", updated_at: when + 20 },
+    ],
+    summary: { text: "Thursday is still open.", points: ["Meet Kenji"], mentioned_at: when },
+  });
+  const relay = createRelay(undefined, { log });
+  await relay.session.loadMemory();
+  const beforeGlass = relay.session.screen();
+  const port = await listen(relay);
+  try {
+    const dismissed = await revise(port, { action: "close_item", list: "todo", text: "Pick up the dry cleaning" });
+    assert.equal(dismissed.status, 200);
+    const afterDismiss = await companion(port);
+    assert.deepEqual(afterDismiss.items.map((row) => row.text), ["Send Kenji 5 USDC", "Return the library books"]);
+    assert.equal(afterDismiss.summary?.text, "Thursday is still open.");
+
+    const edited = await revise(port, {
+      action: "edit_reminder",
+      text: "Meet Kenji Thursday",
+      next: "Meet Kenji Friday",
+    });
+    assert.equal(edited.status, 200);
+    const afterEdit = await companion(port);
+    assert.equal(afterEdit.reminders[0]?.text, "Meet Kenji Friday");
+    assert.equal(afterEdit.reminders[0]?.mentioned_at, when);
+    assert.equal(afterEdit.reminders[0]?.episode_root, "0xmeet");
+    assert.equal(afterEdit.items[0]?.updated_at, when);
+    assert.equal(afterEdit.items[0]?.episode_root, "0xpay");
+
+    const blank = await revise(port, { action: "edit_reminder", text: "Meet Kenji Friday", next: "   " });
+    assert.equal(blank.status, 409);
+    const duplicate = await revise(port, {
+      action: "edit_reminder",
+      text: "Meet Kenji Friday",
+      next: "Call Mum after the appointment",
+    });
+    assert.equal(duplicate.status, 409);
+    const kept = await companion(port);
+    assert.equal(kept.reminders[0]?.text, "Meet Kenji Friday");
+    assert.equal(kept.reminders[1]?.text, "Call Mum after the appointment");
+    assert.deepEqual(relay.session.screen(), beforeGlass);
+    assert.equal(JSON.stringify(relay.session.screen()).includes("Friday"), false);
+  } finally {
+    await relay.close();
+  }
+});
+
+async function revise(port: number, body: unknown): Promise<Response> {
+  return fetch(`http://127.0.0.1:${port}/companion`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}

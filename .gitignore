@@ -7,3 +7,4 @@ firmware/.pio/
 firmware/include/secrets.h
 *.md
 !README.md
+!IDEA.md

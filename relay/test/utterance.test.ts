@@ -170,7 +170,8 @@ test("a live line is committed before the storage write, and a restart keeps ope
 
     const lined = phone.next();
     badge.ws.send(clip);
-    const frame = (await within(lined, 1000)) as PhoneState | null;
+    let frame = (await within(lined, 1000)) as PhoneState | null;
+    if (frame && !frame.live_lines[0]?.translation) frame = (await within(phone.next(), 1000)) as PhoneState | null;
     assert.ok(frame, "live line waited on the storage write");
     assert.equal(frame.live_lines[0]?.transcript, spoken);
     assert.equal(frame.live_lines[0]?.translation, translation);
